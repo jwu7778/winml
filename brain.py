@@ -13,6 +13,25 @@ MODEL_PATH = os.environ.get("MODEL_PATH", r"C:\Users\test\Desktop\LLM_Test\gpt-o
 DEFAULT_TOOL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mytool.py")
 TOOL_SCRIPT_PATH = os.environ.get("TOOL_SCRIPT_PATH", DEFAULT_TOOL_PATH)
 
+def format_manual_prompt(messages):
+    """
+    手動組合 prompt 的 fallback 函式。
+    當無法使用 chat template 時，退回使用 <|system|>, <|user|>, <|assistant|> 標籤拼接。
+    """
+    prompt = ""
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system":
+            prompt += f"<|system|>{content}<|end|>"
+        elif role == "user":
+            prompt += f"<|user|>{content}<|end|>"
+        elif role == "assistant":
+            prompt += f"<|assistant|>{content}<|end|>"
+    # 最後加上 assistant 提示準備生成
+    prompt += "<|assistant|>"
+    return prompt
+
 async def run_agent():
     print(f"[*] 正在初始化 NPU 推理引擎與 MCP 工具伺服器...")
     print(f"[*] 模型路徑: {MODEL_PATH}")
@@ -37,6 +56,8 @@ async def run_agent():
     if os.path.exists(jinja_path):
         with open(jinja_path, "r", encoding="utf-8") as f:
             template_str = f.read()
+    else:
+        print("[資訊] 未找到 chat_template.jinja，將使用 fallback 的手動 Prompt 組合方式。")
 
     server_params = StdioServerParameters(command="python", args=[TOOL_SCRIPT_PATH])
 
@@ -92,12 +113,21 @@ async def run_agent():
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_input}
                 ]
-                messages_str = json.dumps(messages, ensure_ascii=False)
 
-                if template_str:
-                    prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True, template_str=template_str)
-                else:
-                    prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True)
+                # 嘗試建立 Prompt，如果失敗或沒有 template_str，則使用 manual fallback
+                prompt = ""
+                try:
+                    messages_str = json.dumps(messages, ensure_ascii=False)
+                    if template_str:
+                        prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True, template_str=template_str)
+                    else:
+                        prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True)
+                except Exception as e:
+                    prompt = format_manual_prompt(messages)
+
+                # 若回傳空白（有些 tokenizer 實作問題），也切換到 manual
+                if not prompt.strip():
+                    prompt = format_manual_prompt(messages)
 
                 params = og.GeneratorParams(model)
                 # 微調參數：給一點溫度讓它能自然對話，但不過高以防 JSON 結構壞掉
@@ -154,11 +184,18 @@ async def run_agent():
                         messages.append({"role": "assistant", "content": full_response})
                         messages.append({"role": "user", "content": f"工具呼叫的返回結果如下：\n{obs}\n請根據上述資訊回答我的問題。"})
 
-                        messages_str = json.dumps(messages, ensure_ascii=False)
-                        if template_str:
-                            final_prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True, template_str=template_str)
-                        else:
-                            final_prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True)
+                        final_prompt = ""
+                        try:
+                            messages_str = json.dumps(messages, ensure_ascii=False)
+                            if template_str:
+                                final_prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True, template_str=template_str)
+                            else:
+                                final_prompt = tokenizer.apply_chat_template(messages=messages_str, add_generation_prompt=True)
+                        except Exception as e:
+                            final_prompt = format_manual_prompt(messages)
+
+                        if not final_prompt.strip():
+                            final_prompt = format_manual_prompt(messages)
 
                         final_gen = og.Generator(model, params)
                         final_gen.append_tokens(tokenizer.encode(final_prompt))
