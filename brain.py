@@ -93,8 +93,14 @@ async def run_agent():
 
                 # 系統提示：允許它自由回答或輸出 JSON 調用工具
                 system_prompt = f"""你是一個強大的 AI 助手。你可以直接用自然語言回答使用者的問題。
-如果你需要搜尋最新資訊、計算數學或查詢時間，你可以使用工具。
-當你要使用工具時，請「僅」輸出以下格式的 JSON 區塊（請包含 ```json 和 ``` 標籤）：
+
+## MULTI-STEP REASONING
+你支援多步驟推理與工具調用。若使用者詢問需要最新資訊、計算數學或查詢時間等問題時，請使用工具。
+
+當你要呼叫工具時，可以輸出以下特殊格式：
+<|start|>assistant<|channel|>commentary to=tool.[工具名稱] <|constrain|>json<|message|>{{"name":"[工具名稱]","arguments":{{...}}}}<|call|>
+
+或者輸出 Markdown 格式的 JSON 區塊：
 ```json
 {{
   "name": "工具名稱",
@@ -149,9 +155,17 @@ async def run_agent():
 
                 # 尋找 JSON 工具呼叫
                 tool_call_json = None
-                match = re.search(r"```json\s*(\{.*?\})\s*```", full_response, re.DOTALL)
-                if match:
-                    tool_call_json = match.group(1)
+
+                # 1. 匹配特殊模型輸出的工具格式: <|message|>{"name":"...","arguments":{}}<|call|>
+                special_match = re.search(r"<\|message\|>\s*(\{.*?\})\s*<\|call\|>", full_response, re.DOTALL)
+
+                # 2. 匹配 Markdown JSON 格式
+                md_match = re.search(r"```json\s*(\{.*?\})\s*```", full_response, re.DOTALL)
+
+                if special_match:
+                    tool_call_json = special_match.group(1)
+                elif md_match:
+                    tool_call_json = md_match.group(1)
                 else:
                     # 容錯：尋找最後一個看起來像工具調用的 JSON {...}
                     blocks = re.findall(r"(\{.*?\})", full_response, re.DOTALL)
