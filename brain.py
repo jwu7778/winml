@@ -87,6 +87,29 @@ async def run_agent():
             # 最多保留幾組對話 (一組包含 user 和 assistant)
             MAX_HISTORY_PAIRS = 3
 
+            import locale
+            try:
+                # 嘗試取得系統當前語系與地區，例如 'zh_TW'
+                # getdefaultlocale() 在某些新版 Python 中已被棄用，提供 fallback
+                if hasattr(locale, 'getdefaultlocale'):
+                    user_locale, _ = locale.getdefaultlocale()
+                else:
+                    user_locale, _ = locale.getlocale()
+
+                if user_locale and 'TW' in user_locale:
+                    region_hint = "台灣"
+                elif user_locale and 'CN' in user_locale:
+                    region_hint = "中國"
+                elif user_locale and 'HK' in user_locale:
+                    region_hint = "香港"
+                elif user_locale and 'JP' in user_locale:
+                    region_hint = "日本"
+                else:
+                    # 如果偵測不到，預設為台灣 (因為原始腳本有此傾向)，但可依據實際需求調整
+                    region_hint = "台灣"
+            except:
+                region_hint = "台灣"
+
             # 系統提示：允許它自由回答或輸出 JSON 調用工具
             system_prompt = f"""你是一個強大的 AI 助手。你可以直接用自然語言回答使用者的問題。
 
@@ -97,6 +120,7 @@ async def run_agent():
 1. 絕對不允許拒絕回答問題（例如回答「我不知道」、「我無法提供資訊」、「根據政策無法回答」等）。
 2. 當你遇到不知道的資訊、公眾人物的年齡/背景，或是任何超出你內部知識庫的內容時，你必須立刻呼叫 `web_search` 工具去網路上尋找答案。
 3. 關於時間的查詢，請絕對優先使用 `get_current_time` 工具，不要使用 `web_search` 查時間。如果要查特定地區（如台灣、紐約）的時間，請帶入 `location` 參數給 `get_current_time`。
+4. **區域感知**：當前系統的主要地區為「{region_hint}」。當你呼叫 `web_search` 查詢當地新聞、天氣或生活資訊時，請在搜尋關鍵字中主動加入「{region_hint}」以獲得更精準的結果。如果使用者明確指定其他國家或地區，則以使用者指定的為主。
 
 當你要呼叫工具時，可以輸出以下特殊格式：
 <|start|>assistant<|channel|>commentary to=tool.[工具名稱] <|constrain|>json<|message|>{{"name":"[工具名稱]","arguments":{{...}}}}<|call|>

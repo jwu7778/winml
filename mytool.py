@@ -141,7 +141,7 @@ def web_search(query: str) -> str:
     try:
         clean_query = query.strip()
         # 修正 2: 強化 query，加入明確的標籤引導搜尋引擎
-        search_intent = f"{clean_query} Taiwan news"
+        search_intent = clean_query
         
         print(f"[*] 執行搜尋: {search_intent}")
         
@@ -149,7 +149,7 @@ def web_search(query: str) -> str:
         with DDGS() as ddgs:
             search_results = ddgs.text(
                 search_intent, 
-                region='tw-tzh',  
+                region='wt-wt',
                 safesearch='off', 
                 # 如果找不到結果，不要限制在 'd'，改用 None 讓 DDG 給出最相關的
                 timelimit=None,    
