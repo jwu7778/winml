@@ -82,17 +82,13 @@ async def run_agent():
             print(f"[*] 載入的工具數量: {len(tools_list)}")
             print("="*50 + "\n")
 
-            while True:
-                try:
-                    user_input = input("\n[You]: ")
-                except EOFError:
-                    break
+            # 儲存歷史對話
+            chat_history = []
+            # 最多保留幾組對話 (一組包含 user 和 assistant)
+            MAX_HISTORY_PAIRS = 5
 
-                if user_input.lower() in ["exit", "quit"]: break
-                if not user_input.strip(): continue
-
-                # 系統提示：允許它自由回答或輸出 JSON 調用工具
-                system_prompt = f"""你是一個強大的 AI 助手。你可以直接用自然語言回答使用者的問題。
+            # 系統提示：允許它自由回答或輸出 JSON 調用工具
+            system_prompt = f"""你是一個強大的 AI 助手。你可以直接用自然語言回答使用者的問題。
 
 ## MULTI-STEP REASONING
 你支援多步驟推理與工具調用。若使用者詢問未知的人、事、物、最新資訊、計算數學或查詢時間等問題時，請務必使用工具。
@@ -120,10 +116,25 @@ async def run_agent():
 
 記住，如果你有絕對把握知道答案，可以直接回答。如果不確定、不知道、或者是時事與人物資訊，請務必呼叫 `web_search` 工具！千萬不要拒絕回答。"""
 
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input}
-                ]
+            while True:
+                try:
+                    user_input = input("\n[You]: ")
+                except EOFError:
+                    break
+
+                if user_input.lower() in ["exit", "quit"]: break
+                if not user_input.strip(): continue
+
+                # 準備這次要傳遞給模型的訊息
+                messages = [{"role": "system", "content": system_prompt}]
+
+                # 將歷史對話加入 messages 中 (限制最後幾次)
+                # 每對包含 1 個 user, 1 個 assistant。所以乘 2。
+                truncated_history = chat_history[-(MAX_HISTORY_PAIRS * 2):] if chat_history else []
+                messages.extend(truncated_history)
+
+                # 加入本次使用者輸入
+                messages.append({"role": "user", "content": user_input})
 
                 # 嘗試建立 Prompt，如果失敗或沒有 template_str，則使用 manual fallback
                 prompt = ""
@@ -142,7 +153,7 @@ async def run_agent():
 
                 params = og.GeneratorParams(model)
                 # 微調參數：給一點溫度讓它能自然對話，但不過高以防 JSON 結構壞掉
-                params.set_search_options(max_length=1024, temperature=0.3, top_p=0.9, repetition_penalty=1.1)
+                params.set_search_options(max_length=4096, temperature=0.3, top_p=0.9, repetition_penalty=1.1)
 
                 generator = og.Generator(model, params)
                 generator.append_tokens(tokenizer.encode(prompt))
@@ -219,6 +230,10 @@ async def run_agent():
                         else:
                             obs = result.content[0].text
 
+                        # 如果工具返回的字串太長，進行截斷，保護 Token 數量
+                        if len(obs) > 2000:
+                            obs = obs[:2000] + "\n...[結果過長，已自動截斷]"
+
                         print(f"[*] 工具返回結果: {obs}")
 
                         # 把工具結果再丟給模型，讓它綜合回答
@@ -247,17 +262,27 @@ async def run_agent():
                         final_gen = og.Generator(model, params)
                         final_gen.append_tokens(tokenizer.encode(final_prompt))
 
+                        final_response = ""
                         print("\n[Final Answer]: ", end="", flush=True)
                         while not final_gen.is_done():
                             final_gen.generate_next_token()
-                            print(tokenizer_stream.decode(final_gen.get_next_tokens()[0]), end="", flush=True)
+                            token = final_gen.get_next_tokens()[0]
+                            decoded = tokenizer_stream.decode(token)
+                            final_response += decoded
+                            print(decoded, end="", flush=True)
                         print()
+
+                        # 把最後回答存入歷史
+                        chat_history.append({"role": "user", "content": user_input})
+                        chat_history.append({"role": "assistant", "content": final_response})
 
                     except Exception as e:
                         print(f"\n[Error] 工具執行或解析失敗: {e}")
                 else:
                     # 如果沒有檢測到 JSON，表示模型選擇直接回答
-                    pass
+                    chat_history.append({"role": "user", "content": user_input})
+                    chat_history.append({"role": "assistant", "content": full_response})
+
 
 if __name__ == "__main__":
     try:
