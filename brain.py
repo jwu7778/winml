@@ -85,7 +85,7 @@ async def run_agent():
             # 儲存歷史對話
             chat_history = []
             # 最多保留幾組對話 (一組包含 user 和 assistant)
-            MAX_HISTORY_PAIRS = 5
+            MAX_HISTORY_PAIRS = 3
 
             # 系統提示：允許它自由回答或輸出 JSON 調用工具
             system_prompt = f"""你是一個強大的 AI 助手。你可以直接用自然語言回答使用者的問題。
@@ -231,8 +231,9 @@ async def run_agent():
                             obs = result.content[0].text
 
                         # 如果工具返回的字串太長，進行截斷，保護 Token 數量
-                        if len(obs) > 2000:
-                            obs = obs[:2000] + "\n...[結果過長，已自動截斷]"
+                        # 放寬到 3000 字元，並保留開頭的完整資訊，確保網頁搜尋內容不會太早被切斷
+                        if len(obs) > 3000:
+                            obs = obs[:3000] + "\n\n...[結果過長，已自動截斷以保護記憶體]"
 
                         print(f"[*] 工具返回結果: {obs}")
 
