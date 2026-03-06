@@ -1,7 +1,7 @@
 import sys
 import json
 from mcp.server.fastmcp import FastMCP
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 try:
     from duckduckgo_search import DDGS
 except ImportError:
@@ -34,7 +34,8 @@ def get_current_time() -> str:
     """
     當用戶詢問現在的時間、日期或今天是星期幾時調用。
     """
-    now = datetime.now()
+    tz_tw = timezone(timedelta(hours=8))
+    now = datetime.now(tz_tw)
     weekday_map = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五", 5: "六", 6: "日"}
     return now.strftime(f"%Y-%m-%d %H:%M:%S 星期{weekday_map[now.weekday()]}")
 
