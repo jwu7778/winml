@@ -159,18 +159,42 @@ async def run_agent():
                 print()
 
                 # 尋找 JSON 工具呼叫
-                tool_call_json = None
+                selected_tool = None
+                selected_args = {}
 
-                # 1. 匹配特殊模型輸出的工具格式: <|message|>{"name":"...","arguments":{}}<|call|>
+                # 1. 優先匹配模型原生支援的工具呼叫格式:
+                # <|channel|>commentary to=tool.web_search <|constrain|>json<|message|>{"query":"NPU definition"}<|call|>
+                native_match = re.search(r"to=tool\.([a-zA-Z0-9_-]+)\s*<\|constrain\|>json<\|message\|>\s*(\{.*?\})\s*<\|call\|>", full_response, re.DOTALL)
+
+                # 2. 匹配特殊模型輸出的工具格式: <|message|>{"name":"...","arguments":{}}<|call|>
                 special_match = re.search(r"<\|message\|>\s*(\{.*?\})\s*<\|call\|>", full_response, re.DOTALL)
 
-                # 2. 匹配 Markdown JSON 格式
+                # 3. 匹配 Markdown JSON 格式
                 md_match = re.search(r"```json\s*(\{.*?\})\s*```", full_response, re.DOTALL)
 
-                if special_match:
-                    tool_call_json = special_match.group(1)
-                elif md_match:
-                    tool_call_json = md_match.group(1)
+                if native_match:
+                    tool_name = native_match.group(1)
+                    args_str = native_match.group(2)
+                    try:
+                        args = json.loads(args_str)
+                        # 檢查是否錯誤地包裝了我們 Prompt 要求的 {"name": "...", "arguments": {...}}
+                        if isinstance(args, dict) and "name" in args and "arguments" in args and len(args) == 2:
+                            selected_tool = args["name"]
+                            selected_args = args["arguments"]
+                        else:
+                            selected_tool = tool_name
+                            selected_args = args
+                    except json.JSONDecodeError:
+                        pass
+                elif special_match or md_match:
+                    json_str = special_match.group(1) if special_match else md_match.group(1)
+                    try:
+                        data = json.loads(json_str)
+                        if "name" in data and "arguments" in data:
+                            selected_tool = data["name"]
+                            selected_args = data["arguments"]
+                    except json.JSONDecodeError:
+                        pass
                 else:
                     # 容錯：尋找最後一個看起來像工具調用的 JSON {...}
                     blocks = re.findall(r"(\{.*?\})", full_response, re.DOTALL)
@@ -178,16 +202,14 @@ async def run_agent():
                         try:
                             parsed = json.loads(block)
                             if "name" in parsed and "arguments" in parsed:
-                                tool_call_json = block
+                                selected_tool = parsed["name"]
+                                selected_args = parsed["arguments"]
                                 break
                         except json.JSONDecodeError:
                             pass
 
-                if tool_call_json:
+                if selected_tool:
                     try:
-                        data = json.loads(tool_call_json)
-                        selected_tool = data.get("name")
-                        selected_args = data.get("arguments", {})
 
                         print(f"\n[*] 正在執行工具: {selected_tool}...")
                         result = await mcp_session.call_tool(selected_tool, selected_args)
@@ -201,7 +223,13 @@ async def run_agent():
 
                         # 把工具結果再丟給模型，讓它綜合回答
                         messages.append({"role": "assistant", "content": full_response})
-                        messages.append({"role": "user", "content": f"工具呼叫的返回結果如下：\n{obs}\n請根據上述資訊回答我的問題。"})
+
+                        strict_prompt = (
+                            f"【系統強制指令：絕對禁止幻覺】\n"
+                            f"工具呼叫的返回結果如下：\n{obs}\n\n"
+                            f"請「完全基於上述原始結果」回答我的問題。絕不可自行編造或修改資訊。如果結果中有中文星期（如星期五），請直接使用該中文星期，嚴禁自行推算或翻譯成其他日期的英文。"
+                        )
+                        messages.append({"role": "user", "content": strict_prompt})
 
                         final_prompt = ""
                         try:
